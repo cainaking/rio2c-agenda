@@ -28,8 +28,21 @@ BLOCKED_STATUSES = {'rodada', 'buffer', 'indisp', 'pitching', 'viagem', 'painel'
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 EXCEL_PATH = os.path.join(BASE_DIR, 'Rio2C_Agenda_Matchmaking_SalaTransforma_2026.xlsx')
+MATCHES_XLSX_PATH = os.path.join(BASE_DIR, 'matches_aprovados.xlsx')
 PDF_PATH = os.path.join(BASE_DIR, 'matches_aprovados_detalhado_20260504_1055.pdf')
 OVERRIDES_PATH = os.path.join(BASE_DIR, 'overrides.json')
+
+
+def find_matches_xlsx():
+    """Procura por qualquer arquivo de matches xlsx (com timestamp ou não)."""
+    if os.path.exists(MATCHES_XLSX_PATH):
+        return MATCHES_XLSX_PATH
+    # Procura por padrões matches_aprovados*.xlsx
+    import glob
+    candidates = sorted(glob.glob(os.path.join(BASE_DIR, 'matches_aprovados*.xlsx')))
+    # Filtra "_detalhado" que é versão antiga
+    candidates = [c for c in candidates if '_detalhado' not in os.path.basename(c).lower()]
+    return candidates[-1] if candidates else None
 
 
 # ============== OVERRIDES ==============
@@ -142,6 +155,44 @@ def load_participants(overrides):
 
 
 # ============== CARREGAR MATCHES ==============
+def parse_matches_xlsx(xlsx_path):
+    """Lê matches da planilha XLSX (formato novo)."""
+    df = pd.read_excel(xlsx_path, sheet_name=0, header=0)
+    matches = []
+    for _, row in df.iterrows():
+        try:
+            num = int(row['#']) if pd.notna(row['#']) else None
+        except (ValueError, KeyError):
+            num = None
+        if num is None: continue
+
+        # Tier: "Tier 1 — Int×Nac" -> "Tier 1"
+        tier_raw = str(row.get('Tier', '')).strip()
+        tm = re.match(r'(Tier \d)', tier_raw)
+        tier = tm.group(1) if tm else 'Tier 3'
+
+        try:
+            score = int(row.get('Score', 0)) if pd.notna(row.get('Score')) else 0
+        except (ValueError, TypeError):
+            score = 0
+
+        company_a = str(row.get('Empresa A', '')).strip()
+        company_b = str(row.get('Empresa B', '')).strip()
+        contato_a = str(row.get('Contato A', '')).strip()
+        contato_b = str(row.get('Contato B', '')).strip()
+
+        if not company_a or not company_b: continue
+
+        reps_a = [r.strip() for r in re.split(r'\s+e\s+|,\s*|/\s*|\s+&\s+', contato_a) if r.strip() and r.strip().lower() != 'nan']
+        reps_b = [r.strip() for r in re.split(r'\s+e\s+|,\s*|/\s*|\s+&\s+', contato_b) if r.strip() and r.strip().lower() != 'nan']
+
+        matches.append({
+            'num': num, 'company_a': company_a, 'company_b': company_b,
+            'reps_a': reps_a, 'reps_b': reps_b, 'tier': tier, 'score': score,
+        })
+    return matches
+
+
 def parse_matches_pdf():
     reader = PyPDF2.PdfReader(PDF_PATH)
     text = '\n'.join(p.extract_text() for p in reader.pages)
@@ -182,7 +233,12 @@ def parse_matches_pdf():
 
 
 def load_matches(overrides):
-    matches = parse_matches_pdf()
+    # Prefere XLSX (novo formato). Se não tiver, cai pro PDF.
+    xlsx_path = find_matches_xlsx()
+    if xlsx_path:
+        matches = parse_matches_xlsx(xlsx_path)
+    else:
+        matches = parse_matches_pdf()
 
     # Cancelar matches
     cancelled = overrides.get('matches_cancelados', [])
