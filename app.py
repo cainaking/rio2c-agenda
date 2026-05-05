@@ -105,7 +105,8 @@ with st.sidebar:
     show_overrides_summary()
 
 # ============== TABS PRINCIPAIS ==============
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab_up, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📤 Atualizar Planilhas",
     "🚫 Bloquear Horário",
     "➕ Adicionar Match",
     "❌ Cancelar Match",
@@ -113,6 +114,114 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "👤 Novo Participante",
     "📋 Resultado",
 ])
+
+# ============== TAB UPLOAD ==============
+with tab_up:
+    st.subheader("📤 Atualizar Planilha de Participantes / Matches")
+    st.caption("Use quando receber uma nova versão da planilha de disponibilidade ou do PDF de matches aprovados. "
+               "Após subir, aperte **🚀 Regerar Tudo Agora** na barra lateral para aplicar.")
+
+    # Mostrar info atual
+    matches_path = engine.find_matches_xlsx()
+    excel_size = os.path.getsize(engine.EXCEL_PATH) / 1024 if os.path.exists(engine.EXCEL_PATH) else 0
+    matches_size = os.path.getsize(matches_path) / 1024 if matches_path and os.path.exists(matches_path) else 0
+    excel_mtime = datetime.fromtimestamp(os.path.getmtime(engine.EXCEL_PATH)).strftime('%d/%m/%Y %H:%M') if os.path.exists(engine.EXCEL_PATH) else '—'
+    matches_mtime = datetime.fromtimestamp(os.path.getmtime(matches_path)).strftime('%d/%m/%Y %H:%M') if matches_path and os.path.exists(matches_path) else '—'
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.markdown("### 📊 Planilha de Participantes")
+        st.caption(f"**Arquivo atual:** `{os.path.basename(engine.EXCEL_PATH)}`")
+        st.caption(f"**Tamanho:** {excel_size:.1f} KB  •  **Modificado:** {excel_mtime}")
+
+        new_excel = st.file_uploader(
+            "Subir nova versão da planilha de participantes (.xlsx)",
+            type=['xlsx'], key='upload_excel',
+            help="A planilha precisa ter uma aba chamada 'agenda2026' com a estrutura original"
+        )
+        if new_excel is not None:
+            if st.button("✅ Substituir planilha de participantes", type="primary", key="btn_excel"):
+                try:
+                    import pandas as pd
+                    test_df = pd.read_excel(new_excel, sheet_name='agenda2026', header=None)
+                    if test_df.shape[1] < 29:
+                        st.error(f"❌ A planilha precisa ter pelo menos 29 colunas (tem {test_df.shape[1]}). Verifique se é a planilha correta.")
+                    else:
+                        new_excel.seek(0)
+                        with open(engine.EXCEL_PATH, 'wb') as f:
+                            f.write(new_excel.read())
+                        reload_caches()
+                        st.success(f"✅ Planilha atualizada! {test_df.shape[0]} linhas carregadas. Aperte **🚀 Regerar** na barra lateral.")
+                        st.balloons()
+                except Exception as e:
+                    st.error(f"❌ Erro ao validar planilha: {e}")
+
+        if os.path.exists(engine.EXCEL_PATH):
+            with open(engine.EXCEL_PATH, 'rb') as f:
+                st.download_button(
+                    "📥 Baixar planilha atual (backup)", f.read(),
+                    file_name=os.path.basename(engine.EXCEL_PATH),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+
+    with c2:
+        st.markdown("### 🤝 Planilha de Matches Aprovados")
+        if matches_path:
+            st.caption(f"**Arquivo atual:** `{os.path.basename(matches_path)}`")
+            st.caption(f"**Tamanho:** {matches_size:.1f} KB  •  **Modificado:** {matches_mtime}")
+        else:
+            st.caption("⚠️ Nenhuma planilha de matches encontrada — usando PDF como fallback.")
+
+        new_matches = st.file_uploader(
+            "Subir nova versão da planilha de matches (.xlsx)",
+            type=['xlsx'], key='upload_matches',
+            help="A planilha deve ter as colunas: #, Tier, Score, Empresa A, Papel A, País A, Contato A, Empresa B, Papel B, País B, Contato B, Justificativas, Notas"
+        )
+        if new_matches is not None:
+            if st.button("✅ Substituir planilha de matches", type="primary", key="btn_matches"):
+                try:
+                    import pandas as pd
+                    test_df = pd.read_excel(new_matches, sheet_name=0, header=0)
+                    required = {'#', 'Tier', 'Score', 'Empresa A', 'Contato A', 'Empresa B', 'Contato B'}
+                    missing = required - set(test_df.columns)
+                    if missing:
+                        st.error(f"❌ Faltam colunas obrigatórias: {missing}")
+                    else:
+                        new_matches.seek(0)
+                        with open(engine.MATCHES_XLSX_PATH, 'wb') as f:
+                            f.write(new_matches.read())
+                        st.success(f"✅ Planilha de matches atualizada! {len(test_df)} matches carregados. Aperte **🚀 Regerar** na barra lateral.")
+                        st.balloons()
+                except Exception as e:
+                    st.error(f"❌ Erro ao validar planilha: {e}")
+
+        if matches_path and os.path.exists(matches_path):
+            with open(matches_path, 'rb') as f:
+                st.download_button(
+                    "📥 Baixar planilha atual (backup)", f.read(),
+                    file_name=os.path.basename(matches_path),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+
+    st.markdown("---")
+    st.info(
+        "📋 **Como o sistema funciona:**\n\n"
+        "1. Time recebe nova versão da planilha (participantes ou matches)\n"
+        "2. Sobe aqui usando o uploader correspondente\n"
+        "3. Aperta **🚀 Regerar Tudo Agora** na barra lateral\n"
+        "4. Em ~30s, os 3 arquivos de saída são atualizados (Agenda da Equipe, Detalhada, Por Empresa)\n"
+        "5. Baixa os arquivos novos pra distribuir"
+    )
+    st.warning(
+        "⚠️ **Importante sobre persistência:**\n\n"
+        "- Os arquivos enviados ficam ativos **enquanto o app estiver rodando**.\n"
+        "- Se o Streamlit Cloud reiniciar (raro, após 7+ dias inativo), volta pra versão do GitHub.\n"
+        "- **Para tornar permanente**, alguém também faz upload no GitHub: "
+        "[github.com/cainaking/rio2c-agenda](https://github.com/cainaking/rio2c-agenda)"
+    )
 
 # ============== TAB 1: BLOQUEAR HORÁRIO ==============
 with tab1:
