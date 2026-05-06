@@ -156,39 +156,46 @@ def load_participants(overrides):
 
 # ============== CARREGAR MATCHES ==============
 def parse_matches_xlsx(xlsx_path):
-    """Lê matches da planilha XLSX (formato novo)."""
+    """Lê matches da planilha XLSX (formato novo). Lê TODAS as linhas com Empresa A e Empresa B."""
     df = pd.read_excel(xlsx_path, sheet_name=0, header=0)
     matches = []
-    for _, row in df.iterrows():
-        try:
-            num = int(row['#']) if pd.notna(row['#']) else None
-        except (ValueError, KeyError):
-            num = None
-        if num is None: continue
+    auto_num = 1
+    for idx, row in df.iterrows():
+        # Empresa A e B são os ÚNICOS campos obrigatórios
+        company_a = str(row.get('Empresa A', '')).strip() if pd.notna(row.get('Empresa A')) else ''
+        company_b = str(row.get('Empresa B', '')).strip() if pd.notna(row.get('Empresa B')) else ''
+        if not company_a or company_a.lower() == 'nan': continue
+        if not company_b or company_b.lower() == 'nan': continue
 
-        # Tier: "Tier 1 — Int×Nac" -> "Tier 1"
-        tier_raw = str(row.get('Tier', '')).strip()
+        # Número: usa coluna # se válida, senão auto-gera
+        try:
+            num = int(row['#']) if pd.notna(row.get('#')) else auto_num
+        except (ValueError, KeyError, TypeError):
+            num = auto_num
+        auto_num = max(auto_num, num) + 1
+
+        # Tier: "Tier 1 — Int×Nac" -> "Tier 1". Default "Tier 3" se ausente.
+        tier_raw = str(row.get('Tier', '')).strip() if pd.notna(row.get('Tier')) else ''
         tm = re.match(r'(Tier \d)', tier_raw)
         tier = tm.group(1) if tm else 'Tier 3'
 
+        # Score
         try:
-            score = int(row.get('Score', 0)) if pd.notna(row.get('Score')) else 0
+            score = int(float(row.get('Score', 0))) if pd.notna(row.get('Score')) else 50
         except (ValueError, TypeError):
-            score = 0
+            score = 50
 
-        company_a = str(row.get('Empresa A', '')).strip()
-        company_b = str(row.get('Empresa B', '')).strip()
-        contato_a = str(row.get('Contato A', '')).strip()
-        contato_b = str(row.get('Contato B', '')).strip()
+        contato_a = str(row.get('Contato A', '')).strip() if pd.notna(row.get('Contato A')) else ''
+        contato_b = str(row.get('Contato B', '')).strip() if pd.notna(row.get('Contato B')) else ''
 
-        if not company_a or not company_b: continue
-
-        reps_a = [r.strip() for r in re.split(r'\s+e\s+|,\s*|/\s*|\s+&\s+', contato_a) if r.strip() and r.strip().lower() != 'nan']
-        reps_b = [r.strip() for r in re.split(r'\s+e\s+|,\s*|/\s*|\s+&\s+', contato_b) if r.strip() and r.strip().lower() != 'nan']
+        def split_reps(s):
+            if not s or s.lower() == 'nan': return []
+            return [r.strip() for r in re.split(r'\s+e\s+|,\s*|/\s*|\s+&\s+|;\s*', s) if r.strip() and r.strip().lower() != 'nan']
 
         matches.append({
             'num': num, 'company_a': company_a, 'company_b': company_b,
-            'reps_a': reps_a, 'reps_b': reps_b, 'tier': tier, 'score': score,
+            'reps_a': split_reps(contato_a), 'reps_b': split_reps(contato_b),
+            'tier': tier, 'score': score,
         })
     return matches
 
