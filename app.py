@@ -184,18 +184,28 @@ with tab_up:
                 try:
                     import pandas as pd
                     test_df = pd.read_excel(new_matches, sheet_name=0, header=0)
-                    required = {'#', 'Tier', 'Score', 'Empresa A', 'Contato A', 'Empresa B', 'Contato B'}
+                    required = {'Empresa A', 'Empresa B'}
                     missing = required - set(test_df.columns)
                     if missing:
                         st.error(f"❌ Faltam colunas obrigatórias: {missing}")
                     else:
                         new_matches.seek(0)
+                        pdf_bytes = new_matches.read()
                         with open(engine.MATCHES_XLSX_PATH, 'wb') as f:
-                            f.write(new_matches.read())
-                        st.success(f"✅ Planilha de matches atualizada! {len(test_df)} matches carregados. Aperte **🚀 Regerar** na barra lateral.")
+                            f.write(pdf_bytes)
+                        # Conta usando o mesmo parser que o engine usa
+                        valid_matches = engine.parse_matches_xlsx(engine.MATCHES_XLSX_PATH)
+                        total_rows = len(test_df)
+                        valid_count = len(valid_matches)
+                        st.success(f"✅ Planilha atualizada! **{valid_count} matches válidos** carregados (de {total_rows} linhas totais).")
+                        if valid_count < total_rows:
+                            n_skipped = total_rows - valid_count
+                            st.warning(f"⚠️ {n_skipped} linha(s) foram ignoradas (provavelmente faltava 'Empresa A' ou 'Empresa B' preenchida).")
+                        st.info("Agora aperte **🚀 Regerar** na barra lateral para gerar as agendas.")
                         st.balloons()
                 except Exception as e:
                     st.error(f"❌ Erro ao validar planilha: {e}")
+                    import traceback; st.code(traceback.format_exc()[:500])
 
         if matches_path and os.path.exists(matches_path):
             with open(matches_path, 'rb') as f:
