@@ -950,6 +950,13 @@ def run_full(out_general='Agenda_Equipe_SalaTransforma_2026.xlsx', out_dir='Agen
     out_dir_path = os.path.join(BASE_DIR, out_dir)
     out_detalhado_path = os.path.join(BASE_DIR, out_detalhado)
     os.makedirs(out_dir_path, exist_ok=True)
+    # Limpa arquivos antigos pra evitar cache de rodadas anteriores
+    for old_file in os.listdir(out_dir_path):
+        if old_file.endswith('.xlsx'):
+            try:
+                os.remove(os.path.join(out_dir_path, old_file))
+            except Exception:
+                pass
     gerar_agenda_geral(schedule, participants, out_general_path)
     gerar_agenda_detalhada(scheduled, unscheduled, resolved, schedule, participants, out_detalhado_path)
     # Empresas que realmente têm participantes em reuniões agendadas
