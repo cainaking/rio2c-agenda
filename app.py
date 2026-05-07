@@ -152,7 +152,20 @@ with tab_up:
                         with open(engine.EXCEL_PATH, 'wb') as f:
                             f.write(new_excel.read())
                         reload_caches()
-                        st.success(f"✅ Planilha atualizada! {test_df.shape[0]} linhas carregadas. Aperte **🚀 Regerar** na barra lateral.")
+                        st.success(f"✅ Planilha atualizada! {test_df.shape[0]} linhas carregadas.")
+                        # Auto-commit no GitHub pra persistir
+                        token = st.secrets.get("GITHUB_TOKEN", None) if hasattr(st, 'secrets') else None
+                        if token:
+                            ok, msg = engine.commit_to_github(
+                                engine.EXCEL_PATH,
+                                os.path.basename(engine.EXCEL_PATH),
+                                f'Upload: planilha de participantes ({test_df.shape[0]} linhas)',
+                                token)
+                            if ok: st.info(f"💾 {msg} — alteração permanente.")
+                            else: st.warning(f"⚠️ Não persistiu no GitHub: {msg}")
+                        else:
+                            st.warning("⚠️ Token GitHub não configurado — alteração só dura nesta sessão. Configure GITHUB_TOKEN nos secrets do Streamlit.")
+                        st.info("Aperte **🚀 Regerar** na barra lateral para gerar as agendas.")
                         st.balloons()
                 except Exception as e:
                     st.error(f"❌ Erro ao validar planilha: {e}")
@@ -201,6 +214,18 @@ with tab_up:
                         if valid_count < total_rows:
                             n_skipped = total_rows - valid_count
                             st.warning(f"⚠️ {n_skipped} linha(s) foram ignoradas (provavelmente faltava 'Empresa A' ou 'Empresa B' preenchida).")
+                        # Auto-commit no GitHub pra persistir
+                        token = st.secrets.get("GITHUB_TOKEN", None) if hasattr(st, 'secrets') else None
+                        if token:
+                            ok, msg = engine.commit_to_github(
+                                engine.MATCHES_XLSX_PATH,
+                                os.path.basename(engine.MATCHES_XLSX_PATH),
+                                f'Upload: planilha de matches ({valid_count} matches)',
+                                token)
+                            if ok: st.info(f"💾 {msg} — alteração permanente.")
+                            else: st.warning(f"⚠️ Não persistiu no GitHub: {msg}")
+                        else:
+                            st.warning("⚠️ Token GitHub não configurado — alteração só dura nesta sessão. Configure GITHUB_TOKEN nos secrets do Streamlit.")
                         st.info("Agora aperte **🚀 Regerar** na barra lateral para gerar as agendas.")
                         st.balloons()
                 except Exception as e:
@@ -225,12 +250,10 @@ with tab_up:
         "4. Em ~30s, os 3 arquivos de saída são atualizados (Agenda da Equipe, Detalhada, Por Empresa)\n"
         "5. Baixa os arquivos novos pra distribuir"
     )
-    st.warning(
-        "⚠️ **Importante sobre persistência:**\n\n"
-        "- Os arquivos enviados ficam ativos **enquanto o app estiver rodando**.\n"
-        "- Se o Streamlit Cloud reiniciar (raro, após 7+ dias inativo), volta pra versão do GitHub.\n"
-        "- **Para tornar permanente**, alguém também faz upload no GitHub: "
-        "[github.com/cainaking/rio2c-agenda](https://github.com/cainaking/rio2c-agenda)"
+    st.success(
+        "✅ **Persistência automática ativa!**\n\n"
+        "Quando você sobe um arquivo aqui, ele é **automaticamente salvo no GitHub** "
+        "e fica permanente — sobrevive a reinícios do app, atualizações futuras, etc."
     )
 
 # ============== TAB 1: BLOQUEAR HORÁRIO ==============
