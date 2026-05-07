@@ -18,7 +18,21 @@ import PyPDF2
 # ============== CONSTANTES ==============
 DAYS = ['27/05 (Qua)', '28/05 (Qui)', '29/05 (Sex)']
 SLOTS = ['10h-10h40', '11h-11h40', '11h50-12h30', '14h-14h40', '15h-15h40', '16h-16h40', '17h-17h40']
-TABLES_PER_SLOT = 12
+TABLES_PER_SLOT = 12  # capacidade padrão
+# Capacidades especiais por slot. Sexta-feira tem 1 mesa a mais pra acomodar
+# matches concentrados nesse dia.
+TABLES_PER_SLOT_OVERRIDE = {
+    ('29/05 (Sex)', '10h-10h40'): 13,
+    ('29/05 (Sex)', '11h-11h40'): 13,
+    ('29/05 (Sex)', '11h50-12h30'): 13,
+    ('29/05 (Sex)', '14h-14h40'): 13,
+    ('29/05 (Sex)', '15h-15h40'): 13,
+    ('29/05 (Sex)', '16h-16h40'): 13,
+    ('29/05 (Sex)', '17h-17h40'): 13,
+}
+
+def cap_for(day, slot):
+    return TABLES_PER_SLOT_OVERRIDE.get((day, slot), TABLES_PER_SLOT)
 DAY_COL_RANGES = {
     '27/05 (Qua)': list(range(8, 15)),
     '28/05 (Qui)': list(range(15, 22)),
@@ -462,7 +476,7 @@ def schedule_matches(matches, participants):
         best, best_score = None, None
         for day in DAYS:
             for slot in SLOTS:
-                if len(schedule[(day, slot)]) >= TABLES_PER_SLOT: continue
+                if len(schedule[(day, slot)]) >= cap_for(day, slot): continue
                 if not all_avail(m['all_pids'], day, slot): continue
                 loads = [load[pid] for pid in m['all_pids']]
                 slot_idx = SLOTS.index(slot)
@@ -505,9 +519,9 @@ def schedule_matches(matches, participants):
                         bm = next((sm for sm in scheduled if sm['num'] == bn), None)
                         if bm and bm not in blocking:
                             blocking.append(bm)
-                if not blocking and len(schedule[sk]) >= TABLES_PER_SLOT: continue
+                if not blocking and len(schedule[sk]) >= cap_for(day, slot): continue
                 # Garante que após mover blocking + adicionar m, slot não excede capacidade
-                if (len(schedule[sk]) - len(blocking) + 1) > TABLES_PER_SLOT: continue
+                if (len(schedule[sk]) - len(blocking) + 1) > cap_for(day, slot): continue
 
                 relocs = []
                 fail = False
@@ -521,7 +535,7 @@ def schedule_matches(matches, participants):
                             sk2 = (d2, s2)
                             if sk2 == sk: continue
                             current = len(schedule[sk2]) + tentative_slot_count[sk2]
-                            if current >= TABLES_PER_SLOT: continue
+                            if current >= cap_for(d2, s2): continue
                             if not all(participants[pid]['availability'].get(sk2, '') not in BLOCKED_STATUSES for pid in bm['all_pids']): continue
                             if any(sk2 in participants[pid]['scheduled'] for pid in bm['all_pids']): continue
                             # Evita conflito com OUTRAS realocações nesta tentativa
@@ -916,8 +930,8 @@ def gerar_agenda_detalhada(scheduled_matches, unscheduled_matches, resolved_matc
              ('Matches Não Agendados', len(unscheduled_matches)),
              ('Taxa de Agendamento', f'{len(scheduled_matches)/len(resolved_matches)*100:.1f}%' if resolved_matches else '0%'),
              ('', ''),
-             ('Capacidade Total (3 dias)', TABLES_PER_SLOT * len(SLOTS) * len(DAYS)),
-             ('Ocupação Total', f'{len(scheduled_matches)}/{TABLES_PER_SLOT * len(SLOTS) * len(DAYS)}'),
+             ('Capacidade Total (3 dias)', sum(cap_for(d, s) for d in DAYS for s in SLOTS)),
+             ('Ocupação Total', f'{len(scheduled_matches)}/{sum(cap_for(d, s) for d in DAYS for s in SLOTS)}'),
              ('', '')]
     for day in DAYS:
         stats.append((f'Reuniões {day}', sum(1 for m in scheduled_matches if m['day'] == day)))
@@ -930,7 +944,7 @@ def gerar_agenda_detalhada(scheduled_matches, unscheduled_matches, resolved_matc
     stats.append(('', '')); stats.append(('POR SLOT', ''))
     for day in DAYS:
         for slot in SLOTS:
-            stats.append((f'{day} {slot}', f'{len(schedule[(day, slot)])}/{TABLES_PER_SLOT}'))
+            stats.append((f'{day} {slot}', f'{len(schedule[(day, slot)])}/{cap_for(day, slot)}'))
     row = 3
     for label, value in stats:
         ws4.cell(row=row, column=1, value=label).font = bold_font if label else cell_font
