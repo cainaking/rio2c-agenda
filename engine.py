@@ -18,7 +18,7 @@ import PyPDF2
 # ============== CONSTANTES ==============
 DAYS = ['27/05 (Qua)', '28/05 (Qui)', '29/05 (Sex)']
 SLOTS = ['10h-10h40', '11h-11h40', '11h50-12h30', '14h-14h40', '15h-15h40', '16h-16h40', '17h-17h40']
-TABLES_PER_SLOT = 13
+TABLES_PER_SLOT = 11
 DAY_COL_RANGES = {
     '27/05 (Qua)': list(range(8, 15)),
     '28/05 (Qui)': list(range(15, 22)),
@@ -85,6 +85,12 @@ def save_overrides(data):
 
 
 # ============== CARREGAR PARTICIPANTES ==============
+def is_korea_participant(country_str, company_str, name_str=''):
+    """Detecta se o participante é da Coreia."""
+    haystack = f"{country_str} {company_str} {name_str}".lower()
+    return any(k in haystack for k in ['coreia', 'korea', 'corea'])
+
+
 def load_participants(overrides):
     df_raw = pd.read_excel(EXCEL_PATH, sheet_name='agenda2026', header=None)
     participants = {}
@@ -306,7 +312,9 @@ def resolve_matches(matches, participants, company_groups):
                             results.append(pid)
         return results
 
-    # Companion map
+    # Companion map — APENAS quando a obs explicitamente fala "acompanha".
+    # Antes: pareava automaticamente quando 2 pessoas tinham mesma disponibilidade,
+    # mas isso causava bugs (ex: Kromaki Zico recebendo reuniões da Kromaki Fátima).
     COMPANION = {}
     for company, pids in company_groups.items():
         if len(pids) >= 2:
@@ -315,12 +323,6 @@ def resolve_matches(matches, participants, company_groups):
                 if 'acompanha' in obs:
                     for o in pids:
                         if o != pid: COMPANION[pid] = o
-    for company, pids in company_groups.items():
-        if len(pids) == 2:
-            p1, p2 = pids
-            if participants[p1]['availability'] == participants[p2]['availability']:
-                if p1 not in COMPANION and p2 not in COMPANION:
-                    COMPANION[p1] = p2; COMPANION[p2] = p1
 
     resolved = []
     for m in matches:
@@ -546,16 +548,22 @@ def gerar_agenda_geral(schedule, participants, output_path):
 def gerar_agenda_empresa(company, scheduled, participants, company_groups, out_dir):
     pids = company_groups.get(company, [])
     if not pids: return None
+    pids_set = set(pids)
     meetings = []
     for m in scheduled:
-        if any(pid in m['all_pids'] for pid in pids):
-            is_a = any(pid in m['pids_a'] for pid in pids)
-            partner = m['company_b'] if is_a else m['company_a']
-            partner_pids = m['pids_b'] if is_a else m['pids_a']
-            meetings.append({'day': m['day'], 'slot': m['slot'],
-                            'partner_company': partner,
-                            'partner_reps': ', '.join(participants[pid]['name'] for pid in partner_pids),
-                            'our_reps': ', '.join(participants[pid]['name'] for pid in (m['pids_a'] if is_a else m['pids_b']) if pid in pids)})
+        # Verifica APENAS via pids_a/pids_b (que vêm de find_pids do nome do rep).
+        # Companion automático foi desligado, então isso é confiável.
+        in_a = pids_set & set(m['pids_a'])
+        in_b = pids_set & set(m['pids_b'])
+        if not in_a and not in_b: continue
+        is_a = bool(in_a)
+        our_pids_in_match = list(in_a if is_a else in_b)
+        partner = m['company_b'] if is_a else m['company_a']
+        partner_pids = m['pids_b'] if is_a else m['pids_a']
+        meetings.append({'day': m['day'], 'slot': m['slot'],
+                        'partner_company': partner,
+                        'partner_reps': ', '.join(participants[pid]['name'] for pid in partner_pids),
+                        'our_reps': ', '.join(participants[pid]['name'] for pid in our_pids_in_match)})
     if not meetings: return None
     meetings.sort(key=lambda x: (DAYS.index(x['day']), SLOTS.index(x['slot'])))
     wb = Workbook(); ws = wb.active; ws.title = "Minha Agenda"
@@ -848,6 +856,27 @@ def run_full(out_general='Agenda_Equipe_SalaTransforma_2026.xlsx', out_dir='Agen
     overrides = load_overrides()
     participants, company_groups = load_participants(overrides)
     matches = load_matches(overrides)
+
+    # ====== BLOQUEAR COREIA NO DIA 27 ======
+    # Detecta companies coreanas via planilha de matches (coluna País A/B) e bloqueia dia 27
+    korean_companies = set()
+    xlsx_path = find_matches_xlsx()
+    if xlsx_path:
+        try:
+            df_m = pd.read_excel(xlsx_path, sheet_name=0, header=0)
+            for _, row in df_m.iterrows():
+                if is_korea_participant(str(row.get('País A', '')), str(row.get('Empresa A', ''))):
+                    korean_companies.add(str(row.get('Empresa A', '')).strip())
+                if is_korea_participant(str(row.get('País B', '')), str(row.get('Empresa B', ''))):
+                    korean_companies.add(str(row.get('Empresa B', '')).strip())
+        except Exception:
+            pass
+    # Bloqueia todos os slots do dia 27/05 para participantes dessas empresas
+    for pid, p in participants.items():
+        if any(kc and kc.lower() == p['company'].lower() for kc in korean_companies):
+            for slot in SLOTS:
+                p['availability'][('27/05 (Qua)', slot)] = 'indisp'
+
     resolved = resolve_matches(matches, participants, company_groups)
     scheduled, unscheduled, schedule = schedule_matches(resolved, participants)
 
@@ -857,9 +886,11 @@ def run_full(out_general='Agenda_Equipe_SalaTransforma_2026.xlsx', out_dir='Agen
     os.makedirs(out_dir_path, exist_ok=True)
     gerar_agenda_geral(schedule, participants, out_general_path)
     gerar_agenda_detalhada(scheduled, unscheduled, resolved, schedule, participants, out_detalhado_path)
+    # Empresas que realmente têm participantes em reuniões agendadas
     companies_with = set()
     for m in scheduled:
-        for pid in m['all_pids']: companies_with.add(participants[pid]['company'])
+        for pid in (m['pids_a'] | m['pids_b']):
+            companies_with.add(participants[pid]['company'])
     n_files = 0
     for c in sorted(companies_with):
         if gerar_agenda_empresa(c, scheduled, participants, company_groups, out_dir_path):
