@@ -325,18 +325,12 @@ def resolve_matches(matches, participants, company_groups):
                         if o != pid: COMPANION[pid] = o
 
     resolved = []
+    unresolved_log = []
     for m in matches:
         pa, pb = set(), set()
         for r in m['reps_a']: pa.update(find_pids(r, m['company_a']))
         for r in m['reps_b']: pb.update(find_pids(r, m['company_b']))
-        if not pa:
-            for pid, p in participants.items():
-                if m['company_a'].lower() in p['company'].lower() or p['company'].lower() in m['company_a'].lower():
-                    pa.add(pid)
-        if not pb:
-            for pid, p in participants.items():
-                if m['company_b'].lower() in p['company'].lower() or p['company'].lower() in m['company_b'].lower():
-                    pb.add(pid)
+        # Tenta SPECIAL antes de fallback genérico
         if not pa:
             for r in m['reps_a']:
                 mp = SPECIAL.get(r.lower().strip())
@@ -345,12 +339,46 @@ def resolve_matches(matches, participants, company_groups):
             for r in m['reps_b']:
                 mp = SPECIAL.get(r.lower().strip())
                 if mp: pb.update(find_pids(mp))
+        # Fallback por empresa SOMENTE se não achamos ninguém pelo nome.
+        # Estratégia em camadas:
+        # 1) Tenta match exato (case-insensitive)
+        # 2) Tenta cada parte de nomes combinados (ex: "Canal Rural / BR IN TV")
+        # 3) Não usa substring genérico (evita puxar Kromaki Zico em match da Kromaki Fátima)
+        def fallback_by_company(target_company):
+            target_lower = target_company.lower().strip()
+            results = set()
+            # Camada 1: match exato
+            for pid, p in participants.items():
+                if p['company'].lower().strip() == target_lower:
+                    results.add(pid)
+            if results: return results
+            # Camada 2: divide em partes (separador / ou &)
+            parts = [pt.strip().lower() for pt in re.split(r'\s*[/&]\s*', target_company) if pt.strip()]
+            if len(parts) > 1:
+                for part in parts:
+                    for pid, p in participants.items():
+                        if p['company'].lower().strip() == part:
+                            results.add(pid)
+            return results
+
+        if not pa:
+            pa.update(fallback_by_company(m['company_a']))
+        if not pb:
+            pb.update(fallback_by_company(m['company_b']))
+        # Companion: só pra quem tem obs explícita "acompanha"
         for pid in list(pa):
             if pid in COMPANION and COMPANION[pid] not in pa: pa.add(COMPANION[pid])
         for pid in list(pb):
             if pid in COMPANION and COMPANION[pid] not in pb: pb.add(COMPANION[pid])
         if pa and pb:
             resolved.append({**m, 'pids_a': pa, 'pids_b': pb, 'all_pids': pa | pb})
+        else:
+            unresolved_log.append((m['num'], m['company_a'], m['company_b'],
+                                   'pa vazio' if not pa else 'pb vazio'))
+    if unresolved_log:
+        print(f"[resolve_matches] {len(unresolved_log)} match(es) não resolvido(s):")
+        for num, ca, cb, why in unresolved_log[:5]:
+            print(f"  • #{num} {ca} x {cb} ({why})")
     return resolved
 
 
@@ -418,21 +446,32 @@ def schedule_matches(matches, participants):
                         if bm and bm not in blocking:
                             blocking.append(bm)
                 if not blocking and len(schedule[sk]) >= TABLES_PER_SLOT: continue
+                # Garante que após mover blocking + adicionar m, slot não excede capacidade
+                if (len(schedule[sk]) - len(blocking) + 1) > TABLES_PER_SLOT: continue
+
                 relocs = []
                 fail = False
+                # Reserva tentativa: pids -> set(slot) e contagem por slot
+                tentative_pid_slots = defaultdict(set)
+                tentative_slot_count = defaultdict(int)
                 for bm in blocking:
                     ns = None
                     for d2 in DAYS:
                         for s2 in SLOTS:
                             sk2 = (d2, s2)
                             if sk2 == sk: continue
-                            if len(schedule[sk2]) >= TABLES_PER_SLOT: continue
+                            current = len(schedule[sk2]) + tentative_slot_count[sk2]
+                            if current >= TABLES_PER_SLOT: continue
                             if not all(participants[pid]['availability'].get(sk2, '') not in BLOCKED_STATUSES for pid in bm['all_pids']): continue
                             if any(sk2 in participants[pid]['scheduled'] for pid in bm['all_pids']): continue
+                            # Evita conflito com OUTRAS realocações nesta tentativa
+                            if any(sk2 in tentative_pid_slots[pid] for pid in bm['all_pids']): continue
                             ns = sk2; break
                         if ns: break
                     if not ns: fail = True; break
                     relocs.append((bm, ns))
+                    for pid in bm['all_pids']: tentative_pid_slots[pid].add(ns)
+                    tentative_slot_count[ns] += 1
                 if fail: continue
                 for bm, (nd, nsl) in relocs:
                     ok_key = (bm['day'], bm['slot'])
@@ -449,6 +488,33 @@ def schedule_matches(matches, participants):
                 scheduled.append({**m, 'day': day, 'slot': slot})
                 rescued.append(m); ok = True; break
         if not ok: still.append(m)
+
+    # SANITY CHECK: garante consistência entre `scheduled` e `schedule[]`.
+    # Se algo dessincronizou (bug em rescue ou edição posterior), remove órfãos.
+    valid_scheduled = []
+    seen_nums_in_schedule = set()
+    for sk_key, mlist in schedule.items():
+        for sm in mlist:
+            seen_nums_in_schedule.add(sm['num'])
+    for sm in scheduled:
+        sk = (sm['day'], sm['slot'])
+        in_correct_slot = any(x['num'] == sm['num'] for x in schedule.get(sk, []))
+        if in_correct_slot:
+            valid_scheduled.append(sm)
+        else:
+            # Match em scheduled mas não no slot informado. Tenta achar onde está.
+            actual_slot = None
+            for slot_key, mlist in schedule.items():
+                if any(x['num'] == sm['num'] for x in mlist):
+                    actual_slot = slot_key; break
+            if actual_slot:
+                # Atualiza day/slot pra refletir realidade do schedule[]
+                sm['day'], sm['slot'] = actual_slot
+                valid_scheduled.append(sm)
+            else:
+                # Match não está em lugar nenhum do schedule. Move pra unscheduled.
+                still.append(sm)
+    scheduled = valid_scheduled
 
     return scheduled, still, schedule
 
