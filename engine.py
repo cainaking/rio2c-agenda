@@ -318,34 +318,59 @@ def resolve_matches(matches, participants, company_groups):
     SPECIAL = {'sidênia freire pereira': 'Sidênia Freire', 'vitor gabriel da silva': 'Vitor Gabriel',
                'amina sophia nogueira': 'Amina Nogueira', 'tiago campany': 'Tiago Camapny'}
 
+    import unicodedata
+    def strip_accents(s):
+        return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn').lower().strip()
+
     def find_pids(name, company_hint=''):
-        results = []
-        nl = name.lower().strip()
+        nl = strip_accents(name)
+        if not nl: return []
+        # PASSO 1: busca todos os candidatos pelo nome (sem acento)
+        all_candidates = []
         for pid, p in participants.items():
-            pn = p['name'].lower()
+            pn = strip_accents(p['name'])
             if nl in pn or pn in nl:
-                if company_hint:
-                    if company_hint.lower() in p['company'].lower() or p['company'].lower() in company_hint.lower():
-                        results.append(pid)
-                else:
-                    results.append(pid)
-        if not results and nl:
+                all_candidates.append(pid)
+        # Se nenhum match completo, tenta primeiro+último nome
+        if not all_candidates:
             parts = nl.split()
-            if parts:
+            if len(parts) >= 2:
                 first, last = parts[0], parts[-1]
                 for pid, p in participants.items():
-                    pn = p['name'].lower()
+                    pn = strip_accents(p['name'])
                     if first in pn and last in pn:
-                        results.append(pid)
-        if not results and nl:
+                        all_candidates.append(pid)
+        # Se ainda nada, primeiro nome dentro do company_hint
+        if not all_candidates and company_hint:
+            ch = strip_accents(company_hint)
             parts = nl.split()
             if parts:
                 first = parts[0]
                 for pid, p in participants.items():
-                    if company_hint and company_hint.lower() in p['company'].lower():
-                        if first in p['name'].lower():
-                            results.append(pid)
-        return results
+                    pc = strip_accents(p['company'])
+                    if (ch in pc or pc in ch) and first in strip_accents(p['name']):
+                        all_candidates.append(pid)
+        if not all_candidates: return []
+        # PASSO 2: se há múltiplos candidatos, filtra pelo company_hint (se houver)
+        if len(all_candidates) > 1 and company_hint:
+            ch = strip_accents(company_hint)
+            # Tier 1: empresa exata
+            tier1 = [pid for pid in all_candidates
+                     if strip_accents(participants[pid]['company']) == ch]
+            if tier1: return tier1
+            # Tier 2: substring
+            tier2 = [pid for pid in all_candidates
+                     if ch in strip_accents(participants[pid]['company'])
+                     or strip_accents(participants[pid]['company']) in ch]
+            if tier2: return tier2
+            # Tier 3: pelo menos uma palavra em comum (ex: "Kromaki 1" e "Kromaki - Fátima")
+            ch_words = set(ch.split())
+            tier3 = []
+            for pid in all_candidates:
+                pc_words = set(strip_accents(participants[pid]['company']).split())
+                if ch_words & pc_words: tier3.append(pid)
+            if tier3: return tier3
+        return all_candidates
 
     # Companion map — APENAS quando a obs explicitamente fala "acompanha".
     # Antes: pareava automaticamente quando 2 pessoas tinham mesma disponibilidade,
