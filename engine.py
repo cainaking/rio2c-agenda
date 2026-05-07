@@ -18,18 +18,8 @@ import PyPDF2
 # ============== CONSTANTES ==============
 DAYS = ['27/05 (Qua)', '28/05 (Qui)', '29/05 (Sex)']
 SLOTS = ['10h-10h40', '11h-11h40', '11h50-12h30', '14h-14h40', '15h-15h40', '16h-16h40', '17h-17h40']
-TABLES_PER_SLOT = 12  # capacidade padrão
-# Capacidades especiais por slot. Sexta-feira tem 1 mesa a mais pra acomodar
-# matches concentrados nesse dia.
-TABLES_PER_SLOT_OVERRIDE = {
-    ('29/05 (Sex)', '10h-10h40'): 13,
-    ('29/05 (Sex)', '11h-11h40'): 13,
-    ('29/05 (Sex)', '11h50-12h30'): 13,
-    ('29/05 (Sex)', '14h-14h40'): 13,
-    ('29/05 (Sex)', '15h-15h40'): 13,
-    ('29/05 (Sex)', '16h-16h40'): 13,
-    ('29/05 (Sex)', '17h-17h40'): 13,
-}
+TABLES_PER_SLOT = 13  # capacidade padrão (13 mesas em todos os slots/dias)
+TABLES_PER_SLOT_OVERRIDE = {}
 
 def cap_for(day, slot):
     return TABLES_PER_SLOT_OVERRIDE.get((day, slot), TABLES_PER_SLOT)
