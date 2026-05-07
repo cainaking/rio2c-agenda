@@ -18,7 +18,7 @@ import PyPDF2
 # ============== CONSTANTES ==============
 DAYS = ['27/05 (Qua)', '28/05 (Qui)', '29/05 (Sex)']
 SLOTS = ['10h-10h40', '11h-11h40', '11h50-12h30', '14h-14h40', '15h-15h40', '16h-16h40', '17h-17h40']
-TABLES_PER_SLOT = 11
+TABLES_PER_SLOT = 12
 DAY_COL_RANGES = {
     '27/05 (Qua)': list(range(8, 15)),
     '28/05 (Qui)': list(range(15, 22)),
