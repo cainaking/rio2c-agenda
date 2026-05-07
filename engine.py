@@ -45,6 +45,41 @@ def find_matches_xlsx():
     return candidates[-1] if candidates else None
 
 
+# ============== GITHUB AUTO-COMMIT ==============
+def commit_to_github(file_path, repo_filename, commit_message, token):
+    """Faz upload de um arquivo para o repo do GitHub via API.
+    Retorna (success: bool, message: str).
+    """
+    import base64, json, urllib.request, urllib.error
+    REPO = 'cainaking/rio2c-agenda'
+    try:
+        with open(file_path, 'rb') as f:
+            content_b64 = base64.b64encode(f.read()).decode()
+        # Pega SHA atual se existir
+        api_url = f'https://api.github.com/repos/{REPO}/contents/{repo_filename}'
+        sha = None
+        try:
+            req = urllib.request.Request(api_url,
+                headers={'Authorization': f'token {token}', 'Accept': 'application/vnd.github+json'})
+            with urllib.request.urlopen(req) as r:
+                sha = json.loads(r.read()).get('sha')
+        except urllib.error.HTTPError as e:
+            if e.code != 404: raise
+        # PUT
+        body = {'message': commit_message, 'content': content_b64}
+        if sha: body['sha'] = sha
+        req = urllib.request.Request(api_url, method='PUT',
+            headers={'Authorization': f'token {token}', 'Accept': 'application/vnd.github+json',
+                    'Content-Type': 'application/json'},
+            data=json.dumps(body).encode())
+        with urllib.request.urlopen(req) as r:
+            result = json.loads(r.read())
+            sha_short = result['commit']['sha'][:7]
+            return True, f"Commitado no GitHub (commit {sha_short})"
+    except Exception as e:
+        return False, f"Erro ao commitar: {e}"
+
+
 # ============== OVERRIDES ==============
 def load_overrides():
     if os.path.exists(OVERRIDES_PATH):
